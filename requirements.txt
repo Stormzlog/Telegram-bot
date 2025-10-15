@@ -1,2 +1,2 @@
 python-telegram-bot==20.3
-translate==4.7.0
+translate==3.6.1
