@@ -73,7 +73,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🧾 Pay via Gift Card", callback_data="pay_giftcard")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Welcome to the Premium Channel Access Bot 💎\n\nChoose your payment method:", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "Welcome to the Premium Channel Access Bot 💎\n\nChoose your payment method:",
+        reply_markup=reply_markup
+    )
 
 # === Handle main menu selection ===
 async def main_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,9 +94,18 @@ async def main_menu_selection(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.edit_text("💫 Choose a plan to pay with Stars:", reply_markup=reply_markup)
 
     elif query.data == "pay_giftcard":
-        keyboard = [[InlineKeyboardButton("Upload Gift Card & Receipt", callback_data="manual_payment")]]
+        # Add price list in this section
+        price_list = "📋 Gift Card Price List:\n\n"
+        for plan in PLANS.values():
+            price_list += f"• {plan['name']}: ${plan['price_usd']}\n"
+        price_list += "\n🛒 Purchase a gift card matching your desired plan, then upload the receipt."
+
+        keyboard = [[InlineKeyboardButton("📤 Upload Gift Card & Receipt", callback_data="manual_payment")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.edit_text("🧾 Upload your Gift Card & Receipt:", reply_markup=reply_markup)
+        await query.message.edit_text(
+            f"🧾 Pay via Gift Card\n\n{price_list}",
+            reply_markup=reply_markup
+        )
 
 # === Handle Star plan selection ===
 async def star_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,7 +119,7 @@ async def star_plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         title=f"{plan['name']} Subscription",
         description=f"Access to the private channel for {plan['name']}.",
         payload=plan_key,
-        provider_token="",  # Telegram Stars
+        provider_token="",  # Telegram Stars provider token if available
         currency="XTR",
         prices=[LabeledPrice(f"{plan['name']} Plan", stars)],
     )
@@ -131,8 +143,12 @@ async def manual_payment_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    await t_send(query.message,
-        "📸 Please upload your GIFT CARD & PAYMENT RECEIPT image/file below.\n\nOnce received, it will be sent to the admin for verification.", user_id)
+    await t_send(
+        query.message,
+        "📸 Please upload your GIFT CARD & PAYMENT RECEIPT image or file below.\n\n"
+        "Once received, it will be sent to the admin for verification.",
+        user_id
+    )
 
 # === Forward receipts to admin ===
 async def forward_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,15 +178,12 @@ async def forward_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === Admin approval/disapproval ===
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ You are not authorized.")
-        return
+        return await update.message.reply_text("⛔ You are not authorized.")
     if not context.args:
-        await update.message.reply_text("Usage: /approve <user_id>")
-        return
+        return await update.message.reply_text("Usage: /approve <user_id>")
     user_id = int(context.args[0])
     if user_id not in PENDING_APPROVALS:
-        await update.message.reply_text("❌ No pending approval found.")
-        return
+        return await update.message.reply_text("❌ No pending approval found.")
     invite = await context.bot.create_chat_invite_link(chat_id=GROUP_ID, member_limit=1)
     await context.bot.send_message(chat_id=user_id, text=f"🎉 Your payment has been verified!\nHere’s your private channel link:\n{invite.invite_link}")
     PENDING_APPROVALS[user_id]["status"] = "approved"
@@ -178,15 +191,12 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def disapprove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ You are not authorized.")
-        return
+        return await update.message.reply_text("⛔ You are not authorized.")
     if not context.args:
-        await update.message.reply_text("Usage: /disapprove <user_id>")
-        return
+        return await update.message.reply_text("Usage: /disapprove <user_id>")
     user_id = int(context.args[0])
     if user_id not in PENDING_APPROVALS:
-        await update.message.reply_text("❌ No pending approval found.")
-        return
+        return await update.message.reply_text("❌ No pending approval found.")
     await context.bot.send_message(chat_id=user_id, text="❌ Your payment was not approved. Please check your details and try again.")
     PENDING_APPROVALS[user_id]["status"] = "disapproved"
     await update.message.reply_text(f"🚫 Disapproved user {user_id}.")
@@ -204,33 +214,21 @@ async def tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === Run bot ===
 def main():
-    if not BOT_TOKEN:
-        print("ERROR: BOT_TOKEN not set in environment variables.")
-        return
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("approve", approve_user))
+    application.add_handler(CommandHandler("disapprove", disapprove_user))
+    application.add_handler(CommandHandler("tracker", tracker))
+    application.add_handler(CallbackQueryHandler(main_menu_selection, pattern="^(pay_stars|pay_giftcard)$"))
+    application.add_handler(CallbackQueryHandler(star_plan_selected, pattern="^star_"))
+    application.add_handler(CallbackQueryHandler(manual_payment_prompt, pattern="manual_payment"))
+    application.add_handler(PreCheckoutQueryHandler(precheckout_callback))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, forward_receipt))
 
-    # Main commands
-    app.add_handler(CommandHandler("start", start))
-
-    # Callback handlers
-    app.add_handler(CallbackQueryHandler(main_menu_selection, pattern="^(pay_stars|pay_giftcard)$"))
-    app.add_handler(CallbackQueryHandler(star_plan_selected, pattern="^star_"))
-
-    # Payment handlers
-    app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
-    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
-
-    # Receipt upload
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, forward_receipt))
-
-    # Admin commands
-    app.add_handler(CommandHandler("approve", approve_user))
-    app.add_handler(CommandHandler("disapprove", disapprove_user))
-    app.add_handler(CommandHandler("tracker", tracker))
-
-    app.run_polling()
+    print("✅ Bot is running and polling for updates...")
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    print("Bot is running...")
-    application.run_polling()
+    main()
