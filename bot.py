@@ -13,17 +13,17 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from googletrans import Translator
+from translate import Translator  # <-- Updated
 import datetime
-import os  # <-- Added for environment variables
+import os  # For environment variables
 
 # === Config ===
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # <-- Read token from environment variable
-GROUP_ID = int(os.getenv("GROUP_ID", "-1002780760786"))  # Optional: set via env
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Bot token from environment variable
+GROUP_ID = int(os.getenv("GROUP_ID", "-1002780760786"))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6472207061"))
 
 USD_PER_STAR = 0.0251
-MAX_STARS_ALLOWED = 9999
+MAX_STARS_ALLOWED = 15000
 
 # === Subscription Plans ===
 PLANS = {
@@ -36,13 +36,15 @@ PLANS = {
 # === In-memory storage ===
 PENDING_APPROVALS = {}
 USER_LANGUAGES = {}
-translator = Translator()
+
+# Translator setup
+def get_translator(lang="en"):
+    return Translator(to_lang=lang)
 
 # === Helper Functions ===
 def usd_to_stars(usd):
     stars = round(usd / USD_PER_STAR)
     return min(stars, MAX_STARS_ALLOWED)
-
 
 def flag_for(lang):
     flags = {
@@ -51,28 +53,23 @@ def flag_for(lang):
     }
     return flags.get(lang, "🌍")
 
-
 async def t_send(chat, text, user_id):
     """Translate text to user's language before sending."""
     lang = USER_LANGUAGES.get(user_id, "en")
     if lang != "en":
         try:
-            translated = translator.translate(text, dest=lang).text
+            translator = get_translator(lang)
+            translated = translator.translate(text)
             text = f"{flag_for(lang)} {translated}"
         except Exception:
             pass
     await chat.reply_text(text)
 
-
 # === /start command ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    # Detect language
-    try:
-        detected = translator.detect(update.message.text).lang
-        USER_LANGUAGES[user.id] = detected
-    except Exception:
-        USER_LANGUAGES[user.id] = "en"
+    # Detect language (default English)
+    USER_LANGUAGES[user.id] = "en"
 
     keyboard = []
     for key, plan in PLANS.items():
@@ -93,7 +90,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user.id,
     )
     await update.message.reply_markup(reply_markup)
-
 
 # === Handle plan selection & manual uploads ===
 async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,11 +113,9 @@ async def plan_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prices=[LabeledPrice(f"{plan['name']} Plan", stars * 1)],
     )
 
-
 # === Pre-checkout ===
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
-
 
 # === Payment success ===
 async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,7 +128,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     invite = await context.bot.create_chat_invite_link(chat_id=GROUP_ID, member_limit=1)
     await t_send(update.message, f"🎉 Here’s your private access link:\n{invite.invite_link}", user_id)
 
-
 # === Manual payment prompt ===
 async def manual_payment_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -143,7 +136,6 @@ async def manual_payment_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     await t_send(query.message,
         "📸 Please upload your GIFT CARD & PAYMENT RECEIPT image/file below.\n\n"
         "Once received, it will be sent to the admin for verification.", user_id)
-
 
 # === Forward receipts to admin ===
 async def forward_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -171,7 +163,6 @@ async def forward_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=ADMIN_ID, text=caption)
     await t_send(update.message, "✅ Your receipt has been sent for review. Please wait for admin approval.", user.id)
 
-
 # === Admin approves user ===
 async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -196,7 +187,6 @@ async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     PENDING_APPROVALS[user_id]["status"] = "approved"
     await update.message.reply_text(f"✅ Approved user {user_id} ✅")
 
-
 # === Admin disapproves user ===
 async def disapprove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -220,7 +210,6 @@ async def disapprove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     PENDING_APPROVALS[user_id]["status"] = "disapproved"
     await update.message.reply_text(f"🚫 Disapproved user {user_id}.")
 
-
 # === Tracker command for admin ===
 async def tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
@@ -233,7 +222,6 @@ async def tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for uid, info in PENDING_APPROVALS.items():
         text += f"👤 {uid} — {info['status'].upper()} ({info['time']})\n"
     await update.message.reply_text(text)
-
 
 # === Run bot ===
 def main():
@@ -252,7 +240,6 @@ def main():
     app.add_handler(CommandHandler("tracker", tracker))
 
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
